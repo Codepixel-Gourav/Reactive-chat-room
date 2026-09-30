@@ -1,0 +1,24 @@
+ALTER TABLE chat_rooms
+    ADD COLUMN is_public BOOLEAN NOT NULL DEFAULT TRUE,
+    ADD COLUMN invite_code VARCHAR(36) NULL;
+
+UPDATE chat_rooms SET invite_code = UUID() WHERE invite_code IS NULL;
+
+ALTER TABLE chat_rooms
+    MODIFY COLUMN invite_code VARCHAR(36) NOT NULL;
+
+ALTER TABLE chat_messages
+    ADD COLUMN edited_at TIMESTAMP(6) NULL;
+
+CREATE TABLE room_bans (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    room_id VARCHAR(36) NOT NULL,
+    user_id BIGINT NOT NULL,
+    banned_by BIGINT NOT NULL,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_room_ban_room_user (room_id, user_id),
+    CONSTRAINT fk_room_ban_room FOREIGN KEY (room_id) REFERENCES chat_rooms(id),
+    CONSTRAINT fk_room_ban_user FOREIGN KEY (user_id) REFERENCES users(id),
+    CONSTRAINT fk_room_ban_admin FOREIGN KEY (banned_by) REFERENCES users(id)
+) ENGINE=InnoDB;
