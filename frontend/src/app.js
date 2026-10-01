@@ -29,7 +29,12 @@ const state = {
   reconnectAttempt: 0,
   socketVersion: 0,
   toastTimer: 0,
-  busy: false
+  busy: false,
+  theme: localStorage.getItem('orbit-theme') === 'light' ? 'light' : 'dark',
+  createRoomOpen: false,
+  mobileRoomsOpen: false,
+  mobileMembers: false,
+  emojiOpen: false
 };
 
 function readSession() {
@@ -51,6 +56,11 @@ function icon(name, size = '') {
   const paths = {
     search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
+    menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/>',
+    moon: '<path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"/>',
+    smile: '<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>',
+    paperclip: '<path d="m21.4 11.1-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l9.2-9.2a3.5 3.5 0 0 1 5 5l-9.2 9.2a1.5 1.5 0 0 1-2.1-2.1l8.5-8.5"/>',
     hash: '<path d="M5 9h14M4 15h14M10 3 8 21m8-18-2 18"/>',
     chevron: '<path d="m9 18 6-6-6-6"/>',
     copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
@@ -94,9 +104,18 @@ function notify(message, type = 'error') {
 }
 
 function render() {
+  document.documentElement.dataset.theme = state.theme;
+  document.querySelector('meta[name="theme-color"]').content = state.theme === 'dark' ? '#101116' : '#f4f5f9';
   if (!state.session) {
     app.innerHTML = renderAuth();
     return;
+  }
+
+  function resizeComposer() {
+    const textarea = app.querySelector('.message-composer textarea');
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
   }
 
   const oldList = app.querySelector('.message-list');
@@ -121,6 +140,7 @@ function render() {
     next?.focus({ preventScroll: true });
     if (selection && next?.setSelectionRange) next.setSelectionRange(...selection);
   }
+  resizeComposer();
 }
 
 function renderAuth() {
@@ -169,8 +189,9 @@ function renderChat() {
   const filteredPublic = state.publicRooms.filter((item) => item.name.toLowerCase().includes(state.search.toLowerCase()));
   const connected = state.connection === 'Connected';
   return `<main class="workspace">
-    <aside class="left-rail">
-      <div class="sidebar-brand"><a class="wordmark" href="#"><span class="brand-mark">${icon('arrow')}</span> orbit</a><span class="plan-tag">TEAM</span></div>
+    <button type="button" class="drawer-scrim ${state.mobileRoomsOpen || state.mobileMembers ? 'visible' : ''}" data-action="close-drawers" aria-label="Close navigation"></button>
+    <aside class="left-rail ${state.mobileRoomsOpen ? 'mobile-open' : ''}">
+      <div class="sidebar-brand"><a class="wordmark" href="#"><span class="brand-mark">${icon('arrow')}</span> orbit</a><button type="button" class="icon-button theme-toggle-sidebar" data-action="toggle-theme" aria-label="Switch to ${state.theme === 'dark' ? 'light' : 'dark'} theme" title="Switch theme">${icon(state.theme === 'dark' ? 'sun' : 'moon')}</button><button type="button" class="icon-button close-sidebar" data-action="close-drawers" aria-label="Close rooms">${icon('close')}</button><span class="plan-tag">TEAM</span></div>
       <div class="workspace-picker"><span class="workspace-avatar">N</span><span><strong>Northstar Studio</strong><small>Workspace</small></span>${icon('chevron')}</div>
       <label class="search-box">${icon('search')}<input type="search" value="${escapeHtml(state.search)}" placeholder="Search rooms" data-input="room-search" data-focus-key="room-search"><kbd>⌘ K</kbd></label>
       <div class="side-scroll">
@@ -179,10 +200,6 @@ function renderChat() {
         <div class="section-heading public-heading"><span>DISCOVER</span><span class="section-count">${state.publicRooms.length}</span></div>
         <nav class="room-nav public-nav">${filteredPublic.map((item) => roomButton(item, true)).join('') || `<div class="side-empty">${state.search ? 'No matching rooms.' : 'No public rooms to discover yet.'}</div>`}</nav>
         <button type="button" class="create-room-link" data-action="show-create">${icon('plus')} Create a room</button>
-        <form class="create-inline" data-form="create" hidden>
-          <input name="name" minlength="2" maxlength="80" placeholder="Give your room a name" aria-label="Room name" required>
-          <div class="create-inline-actions"><label><input type="checkbox" name="isPublic" checked> Public</label><button class="mini-submit" aria-label="Create room">${icon('check')}</button></div>
-        </form>
         ${state.inviteRoom ? renderInviteCard() : ''}
         <form class="join-form" data-form="join">
           <div class="join-title">JOIN A ROOM</div>
@@ -197,7 +214,9 @@ function renderChat() {
           ${room ? `<div class="room-title-icon">${icon(room.isPublic ? 'hash' : 'lock')}</div><div class="room-heading-copy"><div class="room-name-line"><h1>${escapeHtml(room.name)}</h1><span class="privacy-badge">${room.isPublic ? 'Public' : 'Private'}</span></div><p>${room.memberCount || 0} members <span class="header-separator">·</span> ${state.members.filter((member) => member.online).length} online</p></div>` : `<div class="room-title-icon empty-icon">${icon('arrow')}</div><div class="room-heading-copy"><h1>Your workspace</h1><p>A quieter place to do great work together.</p></div>`}
         </div>
         <div class="header-actions">
-          ${room ? `<button type="button" class="button button-quiet invite-action" data-action="copy-invite">${icon('copy')} <span>Invite</span></button><div class="connection-chip ${connected ? 'is-connected' : ''}"><i></i>${connected ? 'Live' : escapeHtml(state.connection)}</div>` : `<div class="connection-chip"><i></i> ${escapeHtml(state.connection)}</div>`}
+          <button type="button" class="icon-button mobile-rooms" data-action="toggle-rooms" aria-label="Open rooms">${icon('menu')}</button>
+          <button type="button" class="icon-button theme-toggle" data-action="toggle-theme" aria-label="Switch to ${state.theme === 'dark' ? 'light' : 'dark'} theme" title="Switch theme">${icon(state.theme === 'dark' ? 'sun' : 'moon')}</button>
+          ${room ? `<button type="button" class="button button-quiet invite-action" data-action="copy-invite">${icon('copy')} <span>Invite</span></button><div class="connection-chip ${connected ? 'is-connected' : ''} ${state.connection === 'Reconnecting' ? 'is-reconnecting' : ''}"><i></i>${escapeHtml(state.connection)}</div>` : `<div class="connection-chip ${connected ? 'is-connected' : ''}"><i></i> ${escapeHtml(state.connection)}</div>`}
           <button type="button" class="mobile-members button button-quiet" data-action="toggle-members">${icon('users')}</button>
         </div>
       </header>
@@ -215,7 +234,8 @@ function renderChat() {
         <form class="message-composer" data-form="send">
           <div class="composer-shell">
             <textarea name="content" rows="1" maxlength="4000" placeholder="${room ? `Message #${escapeHtml(room.name)}` : 'Choose a room to start messaging'}" data-input="draft" data-focus-key="draft" ${!room || !connected ? 'disabled' : ''}>${escapeHtml(state.draft)}</textarea>
-            <div class="composer-tools"><span class="composer-hint">${room ? 'Enter to send · Shift + Enter for a new line' : 'Messages are saved to your room history'}</span><div class="composer-right"><button type="button" class="composer-attach" title="Formatting is coming soon" aria-label="Formatting help">Aa</button><button type="submit" class="send-button" ${!room || !connected || !state.draft.trim() ? 'disabled' : ''} aria-label="Send message">${icon('send')}</button></div></div>
+            ${state.emojiOpen ? renderEmojiPicker() : ''}
+            <div class="composer-tools"><span class="composer-hint">${room ? 'Enter to send · Shift + Enter for a new line' : 'Messages are saved to your room history'}</span><div class="composer-right"><button type="button" class="composer-tool attachment-button" data-action="attachments" aria-label="Attachments are not supported yet" title="File attachments are not available yet">${icon('paperclip')}</button><button type="button" class="composer-tool" data-action="toggle-emoji" aria-label="Choose emoji" aria-expanded="${state.emojiOpen}">${icon('smile')}</button><button type="submit" class="send-button" ${!room || !connected || !state.draft.trim() ? 'disabled' : ''} aria-label="Send message">${icon('send')}</button></div></div>
           </div>
         </form>
       </div>
@@ -228,7 +248,24 @@ function renderChat() {
       <div class="rail-footer"><span>ORBIT FOR TEAMS</span><span>Made for better conversations.</span></div>
     </aside>
   </main>
+  ${state.createRoomOpen ? renderCreateRoomModal() : ''}
   ${state.modal ? renderModal() : ''}`;
+}
+
+function renderEmojiPicker() {
+  const emojis = ['😀', '😂', '🥹', '😍', '🤔', '🙌', '👏', '🎉', '✨', '🔥', '💜', '👍', '👀', '🙏', '💡', '❤️'];
+  return `<div class="emoji-picker" role="group" aria-label="Choose an emoji">${emojis.map((emoji) => `<button type="button" data-action="insert-emoji" data-emoji="${emoji}" aria-label="Insert ${emoji}">${emoji}</button>`).join('')}</div>`;
+}
+
+function renderCreateRoomModal() {
+  return `<div class="modal-scrim" data-action="close-create-room"><form class="confirm-dialog create-room-dialog" data-form="create" role="dialog" aria-modal="true" aria-labelledby="create-room-title">
+    <button type="button" class="dialog-close icon-button" data-action="close-create-room" aria-label="Close">${icon('close')}</button>
+    <div class="modal-icon">${icon('plus')}</div><div class="eyebrow">A PLACE TO CONNECT</div>
+    <h2 id="create-room-title">Create a room</h2><p>Bring your team together around a new conversation.</p>
+    <label class="create-room-label" for="new-room-name">Room name</label><input id="new-room-name" class="dialog-input" name="name" minlength="2" maxlength="80" placeholder="e.g. product-launch" required>
+    <label class="visibility-option"><input type="checkbox" name="isPublic" checked><span><strong>Make this room discoverable</strong><small>Anyone in your workspace can find and join it.</small></span></label>
+    <div class="modal-actions"><button type="button" class="button button-quiet" data-action="close-create-room">Cancel</button><button type="submit" class="button button-primary">Create room ${icon('arrow')}</button></div>
+  </form></div>`;
 }
 
 function renderInviteCard() {
@@ -315,6 +352,9 @@ async function activateRoom(roomOrId, inviteCode = null) {
     state.nearBottom = true;
     state.error = '';
     state.inviteRoom = null;
+    state.mobileRoomsOpen = false;
+    state.mobileMembers = false;
+    state.emojiOpen = false;
     history.replaceState(null, '', `${location.pathname}${location.hash}`);
     render();
     connectSocket();
@@ -496,6 +536,7 @@ async function createRoom(form) {
       method: 'POST',
       body: JSON.stringify({ name: data.get('name'), isPublic: data.has('isPublic') })
     });
+    state.createRoomOpen = false;
     state.inviteRoom = room;
     notify(`${room.name} is ready to go.`, 'notice');
     await activateRoom(room);
@@ -541,7 +582,7 @@ async function submitAuth(form) {
   }
 }
 
-async function act(action, element) {
+async function act(action, element, event) {
   const id = element.dataset.id;
   const room = state.activeRoom;
   if (action === 'auth-mode') {
@@ -561,10 +602,9 @@ async function act(action, element) {
     sessionStorage.removeItem('chat-session');
     render();
   } else if (action === 'show-create') {
-    const form = app.querySelector('.create-inline');
-    form.hidden = !form.hidden;
-    if (!form.hidden) form.querySelector('input[name="name"]').focus();
-    element.hidden = !form.hidden;
+    state.createRoomOpen = true;
+    render();
+    app.querySelector('#new-room-name')?.focus();
   } else if (action === 'open-room') {
     if (id !== room?.id) await activateRoom(id);
   } else if (action === 'copy-invite') {
@@ -582,7 +622,42 @@ async function act(action, element) {
     render();
   } else if (action === 'toggle-members') {
     state.mobileMembers = !state.mobileMembers;
+    state.mobileRoomsOpen = false;
     render();
+  } else if (action === 'toggle-rooms') {
+    state.mobileRoomsOpen = !state.mobileRoomsOpen;
+    state.mobileMembers = false;
+    render();
+  } else if (action === 'close-drawers') {
+    state.mobileRoomsOpen = false;
+    state.mobileMembers = false;
+    render();
+  } else if (action === 'toggle-theme') {
+    state.theme = state.theme === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('orbit-theme', state.theme);
+    render();
+  } else if (action === 'toggle-emoji') {
+    state.emojiOpen = !state.emojiOpen;
+    render();
+  } else if (action === 'insert-emoji') {
+    const textarea = app.querySelector('.message-composer textarea');
+    const emoji = element.dataset.emoji || '';
+    const cursor = textarea?.selectionStart ?? state.draft.length;
+    state.draft = `${state.draft.slice(0, cursor)}${emoji}${state.draft.slice(cursor)}`;
+    state.emojiOpen = false;
+    render();
+    const nextTextarea = app.querySelector('.message-composer textarea');
+    nextTextarea?.focus();
+    nextTextarea?.setSelectionRange(cursor + emoji.length, cursor + emoji.length);
+  } else if (action === 'attachments') {
+    notify('File attachments are not supported by the chat API yet.', 'notice');
+  } else if (action === 'close-create-room') {
+    if (event.target === element
+      || element.closest('.dialog-close')
+      || element.closest('.modal-actions')) {
+      state.createRoomOpen = false;
+      render();
+    }
   } else if (action === 'focus-composer') {
     app.querySelector('.message-composer textarea')?.focus();
   } else if (action === 'jump-latest') {
@@ -750,6 +825,7 @@ function sendMessage(form) {
     status: 'sending'
   });
   state.draft = '';
+  form.elements.content.value = '';
   state.nearBottom = true;
   state.client.publish({ destination: '/app/chat.send', body: JSON.stringify(event) });
   render();
@@ -780,7 +856,7 @@ app.addEventListener('submit', (event) => {
 
 app.addEventListener('click', (event) => {
   const target = event.target.closest('[data-action]');
-  if (target) act(target.dataset.action, target);
+  if (target) act(target.dataset.action, target, event);
 });
 
 app.addEventListener('input', (event) => {
@@ -788,6 +864,7 @@ app.addEventListener('input', (event) => {
   if (input.dataset.input === 'draft') {
     state.draft = input.value;
     input.closest('form')?.querySelector('.send-button')?.toggleAttribute('disabled', !input.value.trim() || !state.client?.connected);
+    resizeComposer();
     emitTyping();
   } else if (input.dataset.input === 'room-search') {
     state.search = input.value;
@@ -803,8 +880,12 @@ app.addEventListener('keydown', (event) => {
   if (event.target.matches('.message-composer textarea') && event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
     app.querySelector('.message-composer')?.requestSubmit();
-  } else if (event.key === 'Escape' && state.modal) {
+  } else if (event.key === 'Escape' && (state.modal || state.createRoomOpen || state.emojiOpen || state.mobileRoomsOpen || state.mobileMembers)) {
     state.modal = null;
+    state.createRoomOpen = false;
+    state.emojiOpen = false;
+    state.mobileRoomsOpen = false;
+    state.mobileMembers = false;
     render();
   } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault();
