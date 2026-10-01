@@ -1,13 +1,13 @@
 # Chat Engine
 
-Spring Boot MVC/STOMP chat service with a vanilla JavaScript client and MySQL persistence.
+Spring Boot MVC/STOMP chat service with a vanilla JavaScript client and PostgreSQL persistence.
 
 ## Architecture
 
 - **HTTP API:** stateless Spring Security filter chain; short-lived HS256 JWTs authenticate accounts and API requests.
 - **WebSocket:** `/ws` uses STOMP. A bearer token is validated on the STOMP `CONNECT` frame before subscriptions or application messages are accepted. Browsers cannot set arbitrary HTTP upgrade headers, so the token is sent in the STOMP CONNECT headers instead of a URL query string.
 - **Authorization:** every room subscription and chat action checks persisted room membership; user IDs and sender names come from the authenticated principal, not the message body.
-- **Persistence:** MySQL stores users, rooms, memberships, messages, idempotency keys, receipts, and an outbox. Flyway owns the schema.
+- **Persistence:** PostgreSQL stores users, rooms, memberships, messages, idempotency keys, receipts, and an outbox. Flyway owns the schema.
 - **Room discovery:** authenticated users can create invite-link rooms, join by room ID, and browse rooms they have not joined.
 - **Room lifecycle and moderation:** room owners can switch visibility, rotate private invite tokens, kick or ban members, and delete rooms with their messages and receipts. Members can leave rooms.
 - **Message controls:** authors can edit or delete their own messages. Delivery and read receipts are persisted for room recipients and reflected in the sender's message history.
@@ -19,10 +19,10 @@ Spring Boot MVC/STOMP chat service with a vanilla JavaScript client and MySQL pe
 
 Requirements: Java 17+, Maven, Node.js 20+, npm, and Docker Compose.
 
-1. Start MySQL:
+1. Start PostgreSQL:
 
    ```powershell
-   docker compose up -d mysql
+   docker compose up -d postgres
    ```
 
 2. In one terminal, start the backend:
@@ -31,7 +31,7 @@ Requirements: Java 17+, Maven, Node.js 20+, npm, and Docker Compose.
    .\mvnw.cmd spring-boot:run
    ```
 
-   Flyway creates the schema at startup. The local connection defaults are in `application.properties`.
+   Flyway creates the schema at startup. The local connection defaults are in `application.properties`. Existing MySQL data is not migrated automatically; export and import it separately before switching a production deployment.
 
 3. In a second terminal, start the frontend development server:
 
@@ -58,8 +58,8 @@ Requirements: Java 17+, Maven, Node.js 20+, npm, and Docker Compose.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MYSQL_URL` | `jdbc:mysql://localhost:3306/chat_engine?...` | JDBC connection |
-| `MYSQL_USER` / `MYSQL_PASSWORD` | `chat` / `chat` | Database credentials |
+| `DATABASE_URL` | `jdbc:postgresql://localhost:5432/chat_engine` | JDBC connection |
+| `DATABASE_USER` / `DATABASE_PASSWORD` | `chat` / `chat` | Database credentials |
 | `DB_POOL_SIZE` | `30` | Per-instance Hikari maximum |
 | `JWT_SECRET` | local-development-only value | HS256 key; configure a unique random secret of at least 32 bytes in deployment |
 | `CHAT_ALLOWED_ORIGINS` | `http://localhost:5173,http://localhost:8080` | Exact allowed browser origins |
@@ -116,8 +116,8 @@ Protected HTTP calls use `Authorization: Bearer <accessToken>`.
 
 ## Scaling and guarantees
 
-The WebSocket server does not use a pool of socket objects: sockets are long-lived sessions. Real-time fan-out, presence, and rate limits are local to one application instance, so run a single instance unless shared coordination is added. Use bounded STOMP executors and a bounded Hikari pool, and size the JDBC pool below the MySQL connection budget.
+The WebSocket server does not use a pool of socket objects: sockets are long-lived sessions. Real-time fan-out, presence, and rate limits are local to one application instance, so run a single instance unless shared coordination is added. Use bounded STOMP executors and a bounded Hikari pool, and size the JDBC pool below the PostgreSQL connection budget.
 
-The accepted-message guarantee is **durable database commit before ACK**. The outbox retries local event publication, and clients recover missed live events from MySQL history when reconnecting.
+The accepted-message guarantee is **durable database commit before ACK**. The outbox retries local event publication, and clients recover missed live events from PostgreSQL history when reconnecting.
 
-Before production, add refresh-token rotation/revocation, email verification/password recovery, administrative room moderation, MySQL TLS and HA, metrics/tracing/alerts, retention/partitioning policies, and load tests for connection churn and slow clients.
+Before production, add refresh-token rotation/revocation, email verification/password recovery, administrative room moderation, PostgreSQL TLS and HA, metrics/tracing/alerts, retention/partitioning policies, and load tests for connection churn and slow clients.
